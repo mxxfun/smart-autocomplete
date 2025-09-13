@@ -267,10 +267,11 @@ class SmartAutocomplete {
             properties: {
               accept: { type: 'boolean' },
               confidence: { type: 'number', minimum: 0, maximum: 1 },
-              sentences: { 
-                type: 'array', 
-                items: { type: 'string' }, 
-                maxItems: 3 
+              sentences: {
+                type: 'array',
+                items: { type: 'string' },
+                minItems: this.minSentences,
+                maxItems: this.maxSentences
               }
             },
             required: ['accept', 'confidence', 'sentences']
@@ -353,7 +354,7 @@ class SmartAutocomplete {
             properties: {
               accept: { type: 'boolean' },
               confidence: { type: 'number', minimum: 0, maximum: 1 },
-              sentences: { type: 'array', items: { type: 'string' }, maxItems: 3 }
+              sentences: { type: 'array', items: { type: 'string' }, minItems: this.minSentences, maxItems: this.maxSentences }
             },
             required: ['accept', 'confidence', 'sentences']
           }
@@ -383,16 +384,17 @@ class SmartAutocomplete {
     const beforeCursor = contextData.beforeCursor || contextData.text;
     const afterCursor = contextData.afterCursor || '';
     const completionPoint = `${beforeCursor}[CURSOR]${afterCursor}`;
-    return `You are a text completion assistant. Continue ONLY the text after [CURSOR].
+    return `You are a text continuation engine. Continue ONLY the text after [CURSOR].
 
 Current text: "${completionPoint}"
 
 Rules:
-- Output ONLY the continuation text that should come after [CURSOR]
+- Output ONLY the continuation that should come after [CURSOR]
 - Do NOT repeat any text already before [CURSOR]
+- Do NOT answer questions, address the user, or explain
 - ${languageInstruction}
-- Max 3 sentences, natural flow, match style and tone
-- If nothing should be added, output nothing`;
+- Output ${this.minSentences}-${this.maxSentences} sentences maximum, natural flow, match style and tone
+- If no continuation is appropriate, output nothing`;
   }
 
   shouldEarlyStopStreaming(text) {
@@ -506,33 +508,30 @@ Rules:
     // Show exactly where completion should happen using a marker
     const completionPoint = `${beforeCursor}[CURSOR]${afterCursor}`;
     
-    // Analyze text to determine if it needs completion or is a question
-    const isQuestion = this.isTextQuestion(beforeCursor);
     const toneHints = this.deriveToneHints(beforeCursor);
-    const completionType = isQuestion ? 'answer this question' : 'continue this text naturally with matching tone and phrasing';
     
-    return `You are a text completion assistant. Complete ONLY the text after [CURSOR].
+    return `You are a text continuation engine. Continue ONLY the text after [CURSOR].
 
 Current text: "${completionPoint}"${contextInfo}
 
 CRITICAL INSTRUCTIONS:
-- Write ONLY what should come after [CURSOR]
-- DO NOT repeat any text that appears before [CURSOR], even with different casing or punctuation
-- ${isQuestion ? 'Provide a helpful answer to the question' : 'Continue the text naturally from the cursor position'}
+- Output ONLY the continuation that should come after [CURSOR]
+- DO NOT repeat any text that appears before [CURSOR]
+- DO NOT answer questions, give advice, or address the user
 - ${languageInstruction}
 - Match the writing style and tone exactly${toneHints ? ` (hints: ${toneHints})` : ''}
-- Provide 1-3 sentences maximum that flow naturally from the cursor position
-- If the text already seems complete, respond with accept: false
+- Provide ${this.minSentences}-${this.maxSentences} sentences that flow naturally from the cursor position
+- If no continuation is appropriate, set accept: false and leave sentences empty
 
 Example:
 Text: "Hello, my name is John and I[CURSOR]"
 Good completion: " work as a software engineer."
 Bad completion: "Hello, my name is John and I work as a software engineer."
 
-Respond with JSON containing:
-- accept: boolean (whether completion is appropriate)
+Respond with JSON only containing:
+- accept: boolean (whether a continuation should be inserted)
 - confidence: number 0-1 (how confident you are)
-- sentences: array of 1-3 completion sentences (just the new text, not repetitions)`;
+- sentences: array of 1-3 continuation sentences (only new text, no repetitions)`;
   }
 
   cleanCompletionText(completion, contextData) {
@@ -825,7 +824,7 @@ Respond with JSON containing:
 
       // Create the model session (downloads automatically if needed)
       const createOptions = {
-        initialPrompts: [{role: 'system', content: 'You are a helpful text completion assistant.'}],
+        initialPrompts: [{role: 'system', content: 'You are an on-device text continuation engine. You ONLY generate the next part of the user\'s text after a [CURSOR] marker. Never answer questions, never address the user, never explain your reasoning, and never repeat text that appears before [CURSOR]. Match the detected language, tone, and style. If no continuation is appropriate, you output nothing (or accept: false when structured output is requested).'}],
         temperature: 0.3,
         topK: 3,
         language: 'en'
