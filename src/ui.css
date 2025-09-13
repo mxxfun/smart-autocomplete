@@ -1,0 +1,145 @@
+/**
+ * Local Smart Autocomplete - UI Styles
+ * Ghost text styling and visual feedback for the autocomplete extension
+ */
+
+.smart-autocomplete-ghost {
+  /* Positioning */
+  position: absolute;
+  z-index: 999999;
+  pointer-events: none;
+  
+  /* Typography */
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 
+               'Helvetica Neue', Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.4;
+  
+  /* Appearance - ghost text style */
+  color: #666666;
+  background-color: rgba(0, 0, 0, 0.02);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 4px;
+  
+  /* Layout */
+  padding: 6px 10px;
+  max-width: 400px;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+  
+  /* Subtle animation */
+  opacity: 0;
+  transform: translateY(-2px);
+  animation: smart-autocomplete-fadein 0.2s ease-out forwards;
+  
+  /* Box model */
+  box-sizing: border-box;
+  
+  /* Shadow for better visibility */
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* Fade in animation */
+@keyframes smart-autocomplete-fadein {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 0.85;
+    transform: translateY(0);
+  }
+}
+
+/* Different styles for different states */
+.smart-autocomplete-ghost[data-state="downloading"] {
+  color: #0066cc;
+  border-color: rgba(0, 102, 204, 0.2);
+  background-color: rgba(0, 102, 204, 0.05);
+}
+
+.smart-autocomplete-ghost[data-state="ready"] {
+  color: #006600;
+  border-color: rgba(0, 102, 0, 0.2);
+  background-color: rgba(0, 102, 0, 0.05);
+}
+
+.smart-autocomplete-ghost[data-state="error"] {
+  color: #cc0000;
+  border-color: rgba(204, 0, 0, 0.2);
+  background-color: rgba(204, 0, 0, 0.05);
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+  .smart-autocomplete-ghost {
+    border-width: 2px;
+    background-color: rgba(255, 255, 255, 0.9);
+    color: #000000;
+  }
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+  .smart-autocomplete-ghost {
+    color: #cccccc;
+    background-color: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.2);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  }
+  
+  .smart-autocomplete-ghost[data-state="downloading"] {
+    color: #66b3ff;
+    border-color: rgba(102, 179, 255, 0.3);
+    background-color: rgba(102, 179, 255, 0.1);
+  }
+  
+  .smart-autocomplete-ghost[data-state="ready"] {
+    color: #66ff66;
+    border-color: rgba(102, 255, 102, 0.3);
+    background-color: rgba(102, 255, 102, 0.1);
+  }
+  
+  .smart-autocomplete-ghost[data-state="error"] {
+    color: #ff6666;
+    border-color: rgba(255, 102, 102, 0.3);
+    background-color: rgba(255, 102, 102, 0.1);
+  }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  .smart-autocomplete-ghost {
+    animation: none;
+    opacity: 0.85;
+    transform: none;
+  }
+}
+
+/* Focus indicator for accessibility */
+.smart-autocomplete-ghost::before {
+  content: '';
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  right: -2px;
+  bottom: -2px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  pointer-events: none;
+}
+
+/* Ensure the ghost text doesn't interfere with page layout */
+.smart-autocomplete-ghost {
+  /* Prevent text selection */
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  
+  /* Prevent interaction */
+  pointer-events: none;
+  
+  /* Ensure proper stacking */
+  isolation: isolate;
+}

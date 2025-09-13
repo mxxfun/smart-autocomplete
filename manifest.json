@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "Local Smart Autocomplete",
+  "version": "1.0.0",
+  "description": "On-device text autocomplete using Chrome Built-in AI APIs",
+  
+  "permissions": [
+    "activeTab"
+  ],
+  
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/content.js"],
+      "css": ["src/ui.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  
+  "icons": {
+    "128": "assets/icon128.png"
+  },
+  
+  "web_accessible_resources": [
+    {
+      "resources": ["src/ui.css"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

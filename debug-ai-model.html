@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Chrome Built-in AI Debug Tool</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            max-width: 800px; 
+            margin: 0 auto; 
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .debug-card {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 10px 0;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .status { 
+            padding: 10px; 
+            border-radius: 4px; 
+            margin: 10px 0;
+            font-weight: bold;
+        }
+        .status.success { background: #d4edda; color: #155724; }
+        .status.error { background: #f8d7da; color: #721c24; }
+        .status.warning { background: #fff3cd; color: #856404; }
+        button { 
+            background: #007bff; 
+            color: white; 
+            border: none; 
+            padding: 10px 20px; 
+            border-radius: 4px; 
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover { background: #0056b3; }
+        pre { 
+            background: #f8f9fa; 
+            padding: 15px; 
+            border-radius: 4px; 
+            overflow-x: auto;
+            font-size: 14px;
+        }
+        .step {
+            border-left: 4px solid #007bff;
+            padding-left: 15px;
+            margin: 15px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>Chrome Built-in AI Debug Tool</h1>
+    <p>Use this page to test if Chrome Built-in AI APIs work on your system.</p>
+
+    <div class="debug-card">
+        <h2>Step 1: API Availability Check</h2>
+        <button onclick="checkAPIs()">Check APIs</button>
+        <div id="api-status" class="status" style="display: none;"></div>
+    </div>
+
+    <div class="debug-card">
+        <h2>Step 2: Model Availability Check</h2>
+        <button onclick="checkModel()">Check Model Status</button>
+        <div id="model-status" class="status" style="display: none;"></div>
+    </div>
+
+    <div class="debug-card">
+        <h2>Step 3: Manual Model Download (Required First!)</h2>
+        <div class="step">
+            <strong>IMPORTANT - Do this first:</strong>
+            <ol>
+                <li>Go to <a href="chrome://components/" target="_blank">chrome://components/</a></li>
+                <li>Find "Optimization Guide On Device Model"</li>
+                <li>Click "Check for update"</li>
+                <li>Wait for download (2GB+, takes several minutes)</li>
+                <li>Return here when status shows "Up-to-date"</li>
+            </ol>
+        </div>
+        
+        <h2>Step 4: Test All Built-in AI APIs (After component download)</h2>
+        <div class="step">
+            <strong>Test each API:</strong> Your model shows "Ready" so all should work now!
+        </div>
+        <button onclick="tryCreateModel()">Test Prompt API (LanguageModel)</button>
+        <div id="create-status" class="status" style="display: none;"></div>
+        <div id="download-progress" style="display: none;"></div>
+        
+        <br><br>
+        <button onclick="testSummarizer()">Test Summarizer API</button>
+        <div id="summarizer-status" class="status" style="display: none;"></div>
+        
+        <br><br>
+        <button onclick="testLanguageDetector()">Test Language Detector API</button>
+        <div id="language-status" class="status" style="display: none;"></div>
+    </div>
+
+    <div class="debug-card">
+        <h2>Step 5: Test Your Extension</h2>
+        <div class="step">
+            <strong>After successful model creation above:</strong>
+            <ol>
+                <li>Focus this text area below</li>
+                <li>Press <kbd>Ctrl+Shift+Space</kbd></li>
+                <li>Check if your extension works now</li>
+            </ol>
+        </div>
+        <textarea placeholder="Test your extension here - press Ctrl+Shift+Space" style="width: 100%; height: 100px; padding: 10px; border-radius: 4px; border: 1px solid #ddd;"></textarea>
+    </div>
+
+    <div class="debug-card">
+        <h2>Step 6: Debugging Information</h2>
+        <button onclick="copyDebugInfo()">Copy Debug Info to Clipboard</button>
+        <pre id="debug-info">Click "Check APIs" and "Check Model Status" first to see debug info here.</pre>
+    </div>
+
+    <script>
+        let debugData = {};
+
+        async function checkAPIs() {
+            const statusDiv = document.getElementById('api-status');
+            statusDiv.style.display = 'block';
+            
+            try {
+                const hasLanguageModel = 'LanguageModel' in self;
+                const hasSummarizer = 'Summarizer' in self;
+                const hasLanguageDetector = 'LanguageDetector' in self;
+                
+                debugData.apis = { hasLanguageModel, hasSummarizer, hasLanguageDetector };
+                
+                if (hasLanguageModel) {
+                    statusDiv.className = 'status success';
+                    statusDiv.innerHTML = '✅ Chrome Built-in AI APIs are available!<br>' +
+                        `LanguageModel: ${hasLanguageModel}<br>` +
+                        `Summarizer: ${hasSummarizer}<br>` +
+                        `LanguageDetector: ${hasLanguageDetector}`;
+                } else {
+                    statusDiv.className = 'status error';
+                    statusDiv.innerHTML = '❌ Chrome Built-in AI APIs not available. Check:<br>' +
+                        '• Are you using Chrome Canary/Dev ≥128?<br>' +
+                        '• Are the flags enabled at chrome://flags/?<br>' +
+                        '• Try chrome://flags/#prompt-api-for-gemini-nano';
+                }
+            } catch (error) {
+                statusDiv.className = 'status error';
+                statusDiv.innerHTML = '❌ Error checking APIs: ' + error.message;
+                debugData.apiError = error.message;
+            }
+            
+            updateDebugInfo();
+        }
+
+        async function checkModel() {
+            const statusDiv = document.getElementById('model-status');
+            statusDiv.style.display = 'block';
+            
+            if (!('LanguageModel' in self)) {
+                statusDiv.className = 'status error';
+                statusDiv.innerHTML = '❌ LanguageModel API not available. Check APIs first.';
+                return;
+            }
+            
+            try {
+                const availability = await LanguageModel.availability();
+                debugData.availability = availability;
+                
+                switch (availability) {
+                    case 'available':
+                        statusDiv.className = 'status success';
+                        statusDiv.innerHTML = '✅ Model is ready to use immediately!';
+                        break;
+                    case 'downloadable':
+                        statusDiv.className = 'status warning';
+                        statusDiv.innerHTML = '⚠️ Model needs download. Click "Create Model" below to trigger download.';
+                        break;
+                    case 'downloading':
+                        statusDiv.className = 'status warning';
+                        statusDiv.innerHTML = '⏳ Model is currently downloading. Please wait...';
+                        break;
+                    case 'unavailable':
+                        statusDiv.className = 'status error';
+                        statusDiv.innerHTML = '❌ Model unavailable. Device may not be supported or check:<br>' +
+                            '• Go to chrome://on-device-internals<br>' +
+                            '• Check hardware requirements<br>' +
+                            '• Try different Chrome version';
+                        break;
+                    default:
+                        statusDiv.className = 'status error';
+                        statusDiv.innerHTML = '❓ Unknown availability status: ' + availability;
+                }
+            } catch (error) {
+                statusDiv.className = 'status error';
+                statusDiv.innerHTML = '❌ Error checking model: ' + error.message;
+                debugData.modelError = error.message;
+            }
+            
+            updateDebugInfo();
+        }
+
+        async function tryCreateModel() {
+            const statusDiv = document.getElementById('create-status');
+            const progressDiv = document.getElementById('download-progress');
+            statusDiv.style.display = 'block';
+            
+            if (!('LanguageModel' in self)) {
+                statusDiv.className = 'status error';
+                statusDiv.innerHTML = '❌ LanguageModel API not available.';
+                return;
+            }
+
+            // Check user activation
+            const hasActivation = navigator.userActivation?.isActive;
+            debugData.userActivation = hasActivation;
+            
+            if (!hasActivation) {
+                statusDiv.className = 'status error';
+                statusDiv.innerHTML = '❌ No user activation detected. You MUST click this button to trigger model download.';
+                updateDebugInfo();
+                return;
+            }
+
+            statusDiv.className = 'status warning';
+            statusDiv.innerHTML = '⏳ Creating model session...';
+            
+            console.log('[DEBUG] Starting LanguageModel.create()...');
+            
+            try {
+                // Try first without monitor to see if that works
+                console.log('[DEBUG] Trying without monitor first...');
+                const createPromise = LanguageModel.create({
+                    initialPrompts: [{role: 'system', content: 'You are a helpful assistant.'}],
+                    temperature: 0.3,
+                    topK: 3,
+                    language: 'en'
+                });
+                
+                // Try to set up progress monitoring after creation
+                console.log('[DEBUG] Created promise, checking for progress events...');
+                
+                // Note: Model download can take 10-20+ minutes, so no artificial timeout
+                console.log('[DEBUG] Waiting for model download (can take 10-20+ minutes)...');
+                statusDiv.innerHTML = '⏳ Model downloading... This can take 10-20+ minutes on first run. Please be patient!';
+                
+                const model = await createPromise;
+                
+                debugData.modelCreated = true;
+                statusDiv.className = 'status success';
+                statusDiv.innerHTML = '✅ Model created successfully! Your extension should work now.';
+                progressDiv.style.display = 'none';
+                
+                // Test the model with a simple prompt
+                try {
+                    const testResult = await model.prompt('Complete this: Hello');
+                    debugData.testPrompt = testResult;
+                    statusDiv.innerHTML += '<br>🧪 Test prompt worked: "' + testResult.slice(0, 50) + '..."';
+                } catch (testError) {
+                    debugData.testPromptError = testError.message;
+                    statusDiv.innerHTML += '<br>⚠️ Model created but test prompt failed: ' + testError.message;
+                }
+                
+            } catch (error) {
+                console.error('[DEBUG] Model creation failed:', error);
+                statusDiv.className = 'status error';
+                statusDiv.innerHTML = '❌ Failed to create model: ' + error.message + 
+                    '<br><small>Check console for details. Common issues:<br>' +
+                    '• Model download can take 10-20+ minutes (be very patient!)<br>' +
+                    '• Network connection required<br>' +
+                    '• Storage space needed (22GB+)<br>' +
+                    '• Don\'t close browser during download</small>';
+                debugData.createError = error.message;
+                debugData.createErrorDetails = error.toString();
+                progressDiv.style.display = 'none';
+            }
+            
+            updateDebugInfo();
+        }
+
+        async function testSummarizer() {
+            const statusDiv = document.getElementById('summarizer-status');
+            statusDiv.style.display = 'block';
+            
+            try {
+                statusDiv.className = 'status warning';
+                statusDiv.innerHTML = '⏳ Testing Summarizer API...';
+                
+                console.log('[DEBUG] Checking Summarizer availability...');
+                const availability = await Summarizer.availability();
+                console.log('[DEBUG] Summarizer availability:', availability);
+                
+                if (availability === 'unavailable') {
+                    statusDiv.className = 'status error';
+                    statusDiv.innerHTML = '❌ Summarizer API not available';
+                    return;
+                }
+                
+                const summarizer = await Summarizer.create({
+                    type: 'tldr',
+                    length: 'short'
+                });
+                
+                const testText = "Chrome Built-in AI provides on-device artificial intelligence capabilities including language models, text summarization, and language detection. These APIs enable privacy-preserving AI applications that run entirely on the user's device without sending data to external servers. This represents a significant advancement in bringing AI capabilities directly to web browsers.";
+                
+                const summary = await summarizer.summarize(testText);
+                
+                statusDiv.className = 'status success';
+                statusDiv.innerHTML = '✅ Summarizer works!<br><strong>Test summary:</strong> ' + summary;
+                debugData.summarizerTest = { success: true, summary };
+                
+            } catch (error) {
+                console.error('[DEBUG] Summarizer test failed:', error);
+                statusDiv.className = 'status error';
+                statusDiv.innerHTML = '❌ Summarizer failed: ' + error.message;
+                debugData.summarizerError = error.message;
+            }
+            
+            updateDebugInfo();
+        }
+
+        async function testLanguageDetector() {
+            const statusDiv = document.getElementById('language-status');
+            statusDiv.style.display = 'block';
+            
+            try {
+                statusDiv.className = 'status warning';
+                statusDiv.innerHTML = '⏳ Testing Language Detector API...';
+                
+                console.log('[DEBUG] Checking LanguageDetector availability...');
+                const availability = await LanguageDetector.availability();
+                console.log('[DEBUG] LanguageDetector availability:', availability);
+                
+                if (availability === 'unavailable') {
+                    statusDiv.className = 'status error';
+                    statusDiv.innerHTML = '❌ LanguageDetector API not available';
+                    return;
+                }
+                
+                const detector = await LanguageDetector.create();
+                
+                // Test multiple languages
+                const tests = [
+                    { text: "Hello, how are you today?", expected: "en" },
+                    { text: "Bonjour, comment allez-vous?", expected: "fr" },
+                    { text: "Hola, ¿cómo estás?", expected: "es" },
+                    { text: "Guten Tag, wie geht es dir?", expected: "de" }
+                ];
+                
+                let results = [];
+                for (const test of tests) {
+                    const result = await detector.detect(test.text);
+                    results.push({
+                        text: test.text.slice(0, 20) + "...",
+                        detected: result.detectedLanguage,
+                        confidence: result.confidence
+                    });
+                }
+                
+                statusDiv.className = 'status success';
+                statusDiv.innerHTML = '✅ Language Detector works!<br><strong>Test results:</strong><br>' + 
+                    results.map(r => `${r.detected} (${(r.confidence * 100).toFixed(1)}%): ${r.text}`).join('<br>');
+                debugData.languageDetectorTest = { success: true, results };
+                
+            } catch (error) {
+                console.error('[DEBUG] Language Detector test failed:', error);
+                statusDiv.className = 'status error';
+                statusDiv.innerHTML = '❌ Language Detector failed: ' + error.message;
+                debugData.languageDetectorError = error.message;
+            }
+            
+            updateDebugInfo();
+        }
+
+        function updateDebugInfo() {
+            const debugInfo = document.getElementById('debug-info');
+            debugData.timestamp = new Date().toISOString();
+            debugData.userAgent = navigator.userAgent;
+            debugInfo.textContent = JSON.stringify(debugData, null, 2);
+        }
+
+        function copyDebugInfo() {
+            const debugText = document.getElementById('debug-info').textContent;
+            navigator.clipboard.writeText(debugText).then(() => {
+                alert('Debug info copied to clipboard!');
+            });
+        }
+
+        // Auto-check APIs on page load
+        window.onload = () => {
+            setTimeout(checkAPIs, 500);
+        };
+    </script>
+</body>
+</html>
