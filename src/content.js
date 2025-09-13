@@ -517,7 +517,7 @@ Current text: "${completionPoint}"${contextInfo}
 
 CRITICAL INSTRUCTIONS:
 - Write ONLY what should come after [CURSOR]
-- DO NOT repeat any text that appears before [CURSOR]
+- DO NOT repeat any text that appears before [CURSOR], even with different casing or punctuation
 - ${isQuestion ? 'Provide a helpful answer to the question' : 'Continue the text naturally from the cursor position'}
 - ${languageInstruction}
 - Match the writing style and tone exactly${toneHints ? ` (hints: ${toneHints})` : ''}
@@ -543,23 +543,8 @@ Respond with JSON containing:
 
     const beforeCursor = contextData.beforeCursor || '';
     
-    // Get the last few words before cursor to check for repetition
-    const words = beforeCursor.trim().split(/\s+/);
-    const lastFewWords = words.slice(-5).join(' ').toLowerCase(); // Check last 5 words
-    
-    // If completion starts with text already at the end of beforeCursor, remove it
-    const completionLower = completion.toLowerCase();
-    
-    for (let i = 1; i <= Math.min(lastFewWords.length, completion.length); i++) {
-      const endOfContext = lastFewWords.slice(-i);
-      const startOfCompletion = completionLower.slice(0, i);
-      
-      if (endOfContext === startOfCompletion) {
-        // Found overlap, remove it from completion
-        completion = completion.slice(i).trim();
-        break;
-      }
-    }
+    // Robust overlap removal (case-insensitive, ignores punctuation/spacing)
+    completion = this.removeContextOverlap(beforeCursor, completion);
     
     // Also check for full sentence repetition patterns
     const lastSentence = beforeCursor.match(/[^.!?]*$/)?.[0]?.trim();
@@ -571,6 +556,59 @@ Respond with JSON containing:
     completion = completion.replace(/^[,;:.!?]+\s*/, '');
     
     return completion;
+  }
+
+  // Remove overlap between the end of beforeCursor and the start of completion,
+  // matching case-insensitively and ignoring punctuation/extra spaces.
+  removeContextOverlap(beforeCursor, completion) {
+    const maxWindowChars = 120;
+    const before = (beforeCursor || '').slice(-maxWindowChars);
+    const comp = completion || '';
+
+    const lowerBefore = before.toLowerCase();
+    const lowerComp = comp.toLowerCase();
+
+    // 1) Direct longest suffix/prefix match (case-insensitive)
+    let directOverlap = 0;
+    const maxLen = Math.min(lowerBefore.length, lowerComp.length);
+    for (let i = maxLen; i > 0; i--) {
+      if (lowerBefore.slice(-i) === lowerComp.slice(0, i)) { directOverlap = i; break; }
+    }
+
+    // 2) Normalized (strip punctuation and condense spaces) longest match
+    const norm = (s) => s
+      .toLowerCase()
+      .replace(/[\s]+/g, ' ')
+      .replace(/[\u200B-\u200D\uFEFF]/g, '')
+      .replace(/[\,\.;:!\?\-\(\)\[\]\{\}\"\']/g, '')
+      .trim();
+    const normBefore = norm(before);
+    const normComp = norm(comp);
+    let normOverlap = 0;
+    const maxNorm = Math.min(normBefore.length, normComp.length);
+    for (let i = maxNorm; i > 0; i--) {
+      if (normBefore.slice(-i) === normComp.slice(0, i)) { normOverlap = i; break; }
+    }
+
+    // If normalized overlap is larger than direct, compute raw slice index by walking original completion
+    let sliceIndex = directOverlap;
+    if (normOverlap > directOverlap) {
+      let built = '';
+      let idx = 0;
+      while (idx < comp.length && norm(built).length < normOverlap) {
+        built += comp[idx];
+        idx++;
+      }
+      sliceIndex = Math.max(sliceIndex, idx);
+    }
+
+    if (sliceIndex > 0) {
+      let out = comp.slice(sliceIndex).trimStart();
+      // Also remove leading punctuation leftovers
+      out = out.replace(/^[,;:.!?]+\s*/, '');
+      return out;
+    }
+    return comp;
   }
 
   getCurrentCursorPosition() {
