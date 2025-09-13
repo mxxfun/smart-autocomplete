@@ -5,7 +5,8 @@
   "description": "On-device text autocomplete using Chrome Built-in AI APIs",
   
   "permissions": [
-    "activeTab"
+    "activeTab",
+    "storage"
   ],
   
   "host_permissions": [
@@ -30,5 +31,6 @@
       "resources": ["src/ui.css"],
       "matches": ["<all_urls>"]
     }
-  ]
+  ],
+  "options_page": "options.html"
 }

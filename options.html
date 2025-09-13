@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Local Smart Autocomplete - Options</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial; margin: 24px; }
+    .card { max-width: 720px; background: #fff; border: 1px solid #eee; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+    .row { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+    label { min-width: 260px; }
+    input[type="text"] { width: 280px; padding: 6px 8px; }
+    .small { color: #666; font-size: 12px; }
+    ul { margin: 6px 0; padding-left: 18px; }
+    button { padding: 6px 10px; }
+    code { background: #f6f6f6; padding: 1px 4px; border-radius: 4px; }
+  </style>
+  <script defer src="src/options.js"></script>
+  </head>
+<body>
+  <h1>Local Smart Autocomplete – Settings</h1>
+
+  <div class="card">
+    <h2>Triggers</h2>
+    <div class="row"><label><input id="ctrlEnter" type="checkbox"> Enable Ctrl+Enter</label></div>
+    <div class="row"><label><input id="doubleSpace" type="checkbox"> Enable double-space trigger</label></div>
+    <div class="row"><label><input id="autoAfterPunctuation" type="checkbox"> Auto-suggest after punctuation</label></div>
+    <div class="row">
+      <label for="disableToggleShortcut">Disable/Enable site shortcut</label>
+      <input id="disableToggleShortcut" type="text" placeholder="Ctrl+Shift+S">
+    </div>
+    <div class="small">Default manual trigger is <code>Ctrl+Shift+Space</code>.</div>
+  </div>
+
+  <div class="card">
+    <h2>Performance</h2>
+    <div class="row">
+      <label for="cacheSize">Completion cache size</label>
+      <input id="cacheSize" type="number" min="10" max="500" step="10" placeholder="60">
+    </div>
+    <div class="small">Number of cached completion entries (not MB). Stored only in-memory.</div>
+  </div>
+
+  <div class="card">
+    <h2>Completion Length</h2>
+    <div class="row">
+      <label for="minSentences">Minimum sentences</label>
+      <input id="minSentences" type="range" min="1" max="3" step="1">
+      <span id="minSentencesVal" class="small"></span>
+    </div>
+    <div class="row">
+      <label for="maxSentences">Maximum sentences</label>
+      <input id="maxSentences" type="range" min="1" max="6" step="1">
+      <span id="maxSentencesVal" class="small"></span>
+    </div>
+    <div class="small">Controls both streaming early-stop and final truncation.</div>
+  </div>
+
+  <div class="card">
+    <h2>Per‑site Preferences</h2>
+    <div class="small">Websites you’ve disabled will appear here. Click to re‑enable.</div>
+    <ul id="disabledSites"></ul>
+    <button id="refreshSites">Refresh list</button>
+  </div>
+
+  <div class="card">
+    <button id="save">Save</button>
+    <span id="status" class="small"></span>
+  </div>
+</body>
+</html>
+
+

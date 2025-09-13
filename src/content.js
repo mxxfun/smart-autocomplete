@@ -3,6 +3,28 @@
  * Implements keyboard shortcut listener, ghost text rendering, and model download logic
  */
 
+class LRUCache {
+  constructor(capacity = 50) {
+    this.capacity = capacity;
+    this.map = new Map();
+  }
+  get(key) {
+    if (!this.map.has(key)) return null;
+    const value = this.map.get(key);
+    this.map.delete(key);
+    this.map.set(key, value);
+    return value;
+  }
+  set(key, value) {
+    if (this.map.has(key)) this.map.delete(key);
+    this.map.set(key, value);
+    if (this.map.size > this.capacity) {
+      const oldestKey = this.map.keys().next().value;
+      this.map.delete(oldestKey);
+    }
+  }
+}
+
 class SmartAutocomplete {
   constructor() {
     this.isModelReady = false;
@@ -15,6 +37,15 @@ class SmartAutocomplete {
     this.summarizer = null;
     this.languageDetector = null;
     this.abortController = null;
+    this.cache = new LRUCache(60);
+    this.siteEnabled = true;
+    this.triggers = { ctrlEnter: false, doubleSpace: false, autoAfterPunctuation: false };
+    this.disableToggleShortcut = 'Ctrl+Shift+S';
+    this._lastSpaceTimeMs = 0;
+    this._punctuationTimer = null;
+    this._websiteContextCache = { value: null, ts: 0 };
+    this.minSentences = 1;
+    this.maxSentences = 3;
     
     this.init();
   }
@@ -23,6 +54,20 @@ class SmartAutocomplete {
     console.log('[SmartAutocomplete] Initializing...');
     this.setupKeyboardListener();
     this.setupFocusTracking();
+    this.loadSitePreference();
+    this.loadSettings();
+    try {
+      if (chrome?.storage?.onChanged) {
+        chrome.storage.onChanged.addListener((changes, area) => {
+          if (area === 'local' && changes.settings) {
+            const newSettings = changes.settings.newValue || {};
+            this.updateSettingsFromObject(newSettings);
+          }
+        });
+      }
+    } catch (e) {
+      // ignore
+    }
   }
 
   setupKeyboardListener() {
@@ -32,6 +77,20 @@ class SmartAutocomplete {
         event.preventDefault();
         event.stopPropagation();
         this.handleTrigger();
+      }
+
+      // Optional Ctrl+Enter trigger
+      if (this.triggers.ctrlEnter && event.ctrlKey && event.code === 'Enter') {
+        event.preventDefault();
+        event.stopPropagation();
+        this.handleTrigger();
+      }
+      
+      // Ctrl+Shift+S to toggle per-site enable/disable
+      if (this.matchesShortcut(event, this.disableToggleShortcut)) {
+        event.preventDefault();
+        event.stopPropagation();
+        this.toggleSitePreference();
       }
       
       // Tab to accept ghost text
@@ -50,6 +109,33 @@ class SmartAutocomplete {
       // Any typing cancels ghost text
       if (this.ghostTextElement && this.isTypingKey(event)) {
         this.clearGhostText();
+      }
+    }, true);
+
+    // Double-space trigger
+    document.addEventListener('keyup', (event) => {
+      if (!this.triggers.doubleSpace) return;
+      if (event.code === 'Space' && !event.ctrlKey && !event.shiftKey && !event.altKey) {
+        const now = performance.now();
+        if (now - this._lastSpaceTimeMs < 350) {
+          this.handleTrigger();
+          this._lastSpaceTimeMs = 0;
+        } else {
+          this._lastSpaceTimeMs = now;
+        }
+      }
+    }, true);
+
+    // Auto after punctuation trigger with debounce
+    document.addEventListener('input', () => {
+      if (!this.triggers.autoAfterPunctuation) return;
+      if (!this.activeElement || !this.isTextInput(this.activeElement)) return;
+      const text = this.getCurrentText();
+      if (!text) return;
+      const endsWithPunct = /[.!?][\)\]]?\s?$/.test(text);
+      clearTimeout(this._punctuationTimer);
+      if (endsWithPunct) {
+        this._punctuationTimer = setTimeout(() => this.handleTrigger(), 350);
       }
     }, true);
   }
@@ -92,6 +178,12 @@ class SmartAutocomplete {
       console.log('[SmartAutocomplete] No valid text input focused');
       return;
     }
+    
+    // Respect per-site preference
+    if (!this.siteEnabled) {
+      this.showGhostText('Autocomplete is disabled on this site (Ctrl+Shift+S to enable)', null, 'error');
+      return;
+    }
 
     // Clear any existing ghost text
     this.clearGhostText();
@@ -113,7 +205,7 @@ class SmartAutocomplete {
   async generateCompletion() {
     try {
       console.log('[SmartAutocomplete] Generating AI completion...');
-      this.showGhostText('Generating completion...');
+      this.showGhostText('Generating completion...', null, 'loading');
       
       // Create abort controller for cancellation
       this.abortController = new AbortController();
@@ -121,7 +213,7 @@ class SmartAutocomplete {
       // Extract context around cursor and save cursor position
       const contextData = await this.extractContext();
       if (!contextData.text.trim()) {
-        this.showGhostText('No context available for completion');
+        this.showGhostText('No context available for completion', null, 'error');
         return;
       }
       
@@ -142,38 +234,180 @@ class SmartAutocomplete {
         }
       }
       
-      // Create completion prompt
-      const prompt = await this.createCompletionPrompt(contextData, detectedLanguage);
+      // Try cache first
+      const cacheKey = this.buildCacheKey(contextData, detectedLanguage);
+      const cached = this.cache.get(cacheKey);
+      if (cached) {
+        this.showGhostText(cached, cached, 'ready');
+        return;
+      }
       
-      // Generate completion with structured output
-      const response = await this.languageModel.prompt(prompt, {
-        signal: this.abortController.signal,
-        responseConstraint: {
-          type: 'object',
-          properties: {
-            accept: { type: 'boolean' },
-            confidence: { type: 'number', minimum: 0, maximum: 1 },
-            sentences: { 
-              type: 'array', 
-              items: { type: 'string' }, 
-              maxItems: 3 
-            }
-          },
-          required: ['accept', 'confidence', 'sentences']
+      // Prefer streaming if available
+      if (this.languageModel && typeof this.languageModel.promptStreaming === 'function') {
+        await this.generateCompletionStreaming(contextData, detectedLanguage, cacheKey);
+      } else {
+        // Create completion prompt
+        const prompt = await this.createCompletionPrompt(contextData, detectedLanguage);
+        
+        // Generate completion with structured output
+        const options = {
+          language: 'en',
+          responseConstraint: {
+            type: 'object',
+            properties: {
+              accept: { type: 'boolean' },
+              confidence: { type: 'number', minimum: 0, maximum: 1 },
+              sentences: { 
+                type: 'array', 
+                items: { type: 'string' }, 
+                maxItems: 3 
+              }
+            },
+            required: ['accept', 'confidence', 'sentences']
+          }
+        };
+        if (this.abortController) options.signal = this.abortController.signal;
+        const response = await this.languageModel.prompt(prompt, options);
+        // Parse and display completion
+        this.handleCompletionResponse(response, detectedLanguage, contextData);
+        // Cache positive results
+        if (response && response.sentences && response.sentences.length) {
+          let completion = response.sentences.join(' ').trim();
+          completion = this.cleanCompletionText(completion, contextData);
+          if (completion) this.cache.set(cacheKey, completion);
         }
-      });
-      
-      // Parse and display completion
-      this.handleCompletionResponse(response, detectedLanguage, contextData);
+      }
       
     } catch (error) {
       if (error.name === 'AbortError') {
         console.log('[SmartAutocomplete] Completion cancelled');
       } else {
         console.error('[SmartAutocomplete] Completion failed:', error);
-        this.showGhostText('Completion failed: ' + error.message);
+        this.showGhostText('Completion failed: ' + error.message, null, 'error');
       }
     }
+  }
+
+  async generateCompletionStreaming(contextData, detectedLanguage, cacheKey) {
+    // Streaming-only prompt that returns raw continuation text (no JSON)
+    const prompt = await this.createStreamingPrompt(contextData, detectedLanguage);
+    let accumulated = '';
+    this.showGhostText('Generating…', '', 'streaming');
+    try {
+      const streamOptions = { temperature: 0.3, topK: 3, language: 'en' };
+      if (this.abortController) streamOptions.signal = this.abortController.signal;
+      const stream = await this.languageModel.promptStreaming(prompt, streamOptions);
+      
+      // Support async iterator style
+      if (stream && typeof stream[Symbol.asyncIterator] === 'function') {
+        let earlyStop = false;
+        for await (const chunk of stream) {
+          if (typeof chunk !== 'string') continue;
+          accumulated += chunk;
+          const cleaned = this.cleanCompletionText(accumulated, contextData);
+          if (cleaned.trim().length > 0) this.updateGhostText(cleaned);
+          if (this.shouldEarlyStopStreaming(cleaned)) { earlyStop = true; break; }
+        }
+      } else if (stream && typeof stream.onToken === 'function') {
+        // Event-callback style
+        let earlyStop = false;
+        await new Promise((resolve, reject) => {
+          stream.onToken((token) => {
+            if (earlyStop) return;
+            accumulated += token || '';
+            const cleaned = this.cleanCompletionText(accumulated, contextData);
+            if (cleaned.trim().length > 0) this.updateGhostText(cleaned);
+            if (this.shouldEarlyStopStreaming(cleaned)) { earlyStop = true; }
+          });
+          stream.onDone(() => resolve());
+          stream.onError((e) => reject(e));
+        });
+      }
+    } catch (e) {
+      if (e.name !== 'AbortError') {
+        console.log('[SmartAutocomplete] Streaming failed, falling back:', e.message);
+        // Fallback to non-streaming path with structured output
+        const fallbackPrompt = await this.createCompletionPrompt(contextData, detectedLanguage);
+        const options = {
+          language: 'en',
+          responseConstraint: {
+            type: 'object',
+            properties: {
+              accept: { type: 'boolean' },
+              confidence: { type: 'number', minimum: 0, maximum: 1 },
+              sentences: { type: 'array', items: { type: 'string' }, maxItems: 3 }
+            },
+            required: ['accept', 'confidence', 'sentences']
+          }
+        };
+        if (this.abortController) options.signal = this.abortController.signal;
+        const response = await this.languageModel.prompt(fallbackPrompt, options);
+        this.handleCompletionResponse(response, detectedLanguage, contextData);
+        return;
+      }
+    }
+    
+    let finalText = this.cleanCompletionText(accumulated, contextData).trim();
+    finalText = this.limitToSentenceRange(finalText, this.minSentences, this.maxSentences);
+    if (finalText) {
+      this.updateGhostText(finalText);
+      this.currentCompletion = finalText;
+      this.setGhostState('ready');
+      this.cache.set(cacheKey, finalText);
+    } else {
+      this.updateGhostText('No suitable completion found');
+      this.setGhostState('error');
+    }
+  }
+
+  createStreamingPrompt(contextData, language = 'en') {
+    const languageInstruction = language && language !== 'en' ? `Continue in ${language}.` : 'Continue in English.';
+    const beforeCursor = contextData.beforeCursor || contextData.text;
+    const afterCursor = contextData.afterCursor || '';
+    const completionPoint = `${beforeCursor}[CURSOR]${afterCursor}`;
+    return `You are a text completion assistant. Continue ONLY the text after [CURSOR].
+
+Current text: "${completionPoint}"
+
+Rules:
+- Output ONLY the continuation text that should come after [CURSOR]
+- Do NOT repeat any text already before [CURSOR]
+- ${languageInstruction}
+- Max 3 sentences, natural flow, match style and tone
+- If nothing should be added, output nothing`;
+  }
+
+  shouldEarlyStopStreaming(text) {
+    if (!text) return false;
+    const sentenceEndings = (text.match(/[\.\!\?](\s|$)/g) || []).length;
+    return sentenceEndings >= this.maxSentences;
+  }
+
+  limitToSentenceRange(text, minSentences, maxSentences) {
+    if (!text) return text;
+    const tokens = text.split(/([\.\!\?](?:\s|$))/);
+    let sentences = [];
+    for (let i = 0; i < tokens.length; i += 2) {
+      const seg = (tokens[i] || '').trim();
+      const end = tokens[i + 1] || '';
+      if (!seg) continue;
+      sentences.push(seg + end);
+      if (sentences.length >= maxSentences) break;
+    }
+    return sentences.join(' ').trim();
+  }
+
+  buildCacheKey(contextData, language) {
+    const site = location.hostname;
+    const keyPayload = `${site}|${(contextData.beforeCursor || '').slice(-200)}|${language}`;
+    // Simple hash to keep keys short
+    let hash = 0;
+    for (let i = 0; i < keyPayload.length; i++) {
+      const chr = keyPayload.charCodeAt(i);
+      hash = ((hash << 5) - hash) + chr;
+      hash |= 0;
+    }
+    return 'k:' + hash;
   }
 
   async extractContext() {
@@ -241,9 +475,7 @@ class SmartAutocomplete {
   }
 
   async createCompletionPrompt(contextData, language = 'en') {
-    const languageInstruction = language !== 'en' ? 
-      `Continue in ${language === 'es' ? 'Spanish' : language === 'fr' ? 'French' : language === 'de' ? 'German' : 'the detected language'}.` : 
-      'Continue in English.';
+    const languageInstruction = language && language !== 'en' ? `Continue in ${language}.` : 'Continue in English.';
     
     // Extract website context for better completions
     const websiteContext = await this.extractWebsiteContext();
@@ -258,7 +490,7 @@ class SmartAutocomplete {
     
     // Analyze text to determine if it needs completion or is a question
     const isQuestion = this.isTextQuestion(beforeCursor);
-    const completionType = isQuestion ? 'answer this question' : 'continue this text naturally';
+    const completionType = isQuestion ? 'answer this question' : 'continue this text naturally with matching tone and phrasing';
     
     return `You are a text completion assistant. Complete ONLY the text after [CURSOR].
 
@@ -287,6 +519,9 @@ Respond with JSON containing:
   cleanCompletionText(completion, contextData) {
     if (!completion || !contextData) return completion;
     
+    // Remove any accidental echo (even partial) of the cursor marker from the model
+    completion = this.stripCursorArtifacts(completion);
+
     const beforeCursor = contextData.beforeCursor || '';
     
     // Get the last few words before cursor to check for repetition
@@ -336,6 +571,11 @@ Respond with JSON containing:
 
   async extractWebsiteContext() {
     try {
+      // Cache website context for 5 seconds to avoid frequent DOM scans
+      const now = Date.now();
+      if (this._websiteContextCache.value && (now - this._websiteContextCache.ts) < 5000) {
+        return this._websiteContextCache.value;
+      }
       // Get page title and meta description
       const title = document.title || '';
       const description = document.querySelector('meta[name="description"]')?.content || '';
@@ -374,6 +614,7 @@ Respond with JSON containing:
         }
       }
       
+      this._websiteContextCache = { value: context, ts: Date.now() };
       return context;
       
     } catch (error) {
@@ -582,9 +823,9 @@ Respond with JSON containing:
     const demoSuggestions = this.generateDemoSuggestion(currentText);
     
     if (demoSuggestions) {
-      this.showGhostText(demoSuggestions + ' (Demo mode - Chrome Built-in AI not available)');
+      this.showGhostText(demoSuggestions + ' (Demo mode - Chrome Built-in AI not available)', null, 'ready');
     } else {
-      this.showGhostText('Chrome Built-in AI not available. See SETUP-CHROME-AI.md for setup instructions.');
+      this.showGhostText('Chrome Built-in AI not available. See SETUP-CHROME-AI.md for setup instructions.', null, 'error');
     }
   }
 
@@ -633,7 +874,7 @@ Respond with JSON containing:
     return null;
   }
 
-  showGhostText(displayText, completionText = null) {
+  showGhostText(displayText, completionText = null, state = 'ready') {
     this.clearGhostText();
     
     if (!this.activeElement) return;
@@ -642,6 +883,9 @@ Respond with JSON containing:
     this.ghostTextElement.className = 'smart-autocomplete-ghost';
     this.ghostTextElement.textContent = displayText;
     this.ghostTextElement.setAttribute('data-extension', 'smart-autocomplete');
+    this.ghostTextElement.setAttribute('role', 'status');
+    this.ghostTextElement.setAttribute('aria-live', 'polite');
+    this.ghostTextElement.setAttribute('data-state', state);
     
     // Store the actual completion text separately
     this.currentCompletion = completionText || displayText;
@@ -650,6 +894,52 @@ Respond with JSON containing:
     this.positionGhostText();
 
     document.body.appendChild(this.ghostTextElement);
+  }
+
+  updateGhostText(text) {
+    if (!this.ghostTextElement) return;
+    this.ghostTextElement.textContent = text;
+    this.currentCompletion = text;
+  }
+
+  setGhostState(state) {
+    if (!this.ghostTextElement) return;
+    this.ghostTextElement.setAttribute('data-state', state);
+  }
+
+  // Site preference helpers (persisted per hostname)
+  async loadSitePreference() {
+    try {
+      if (!chrome?.storage?.local) return;
+      const host = location.hostname;
+      chrome.storage.local.get(['site_prefs'], (data) => {
+        const prefs = data?.site_prefs || {};
+        this.siteEnabled = prefs[host] !== false; // default enabled
+      });
+    } catch (e) {
+      console.log('[SmartAutocomplete] Failed to load site preference:', e.message);
+      this.siteEnabled = true;
+    }
+  }
+
+  async toggleSitePreference() {
+    try {
+      if (!chrome?.storage?.local) return;
+      const host = location.hostname;
+      chrome.storage.local.get(['site_prefs'], (data) => {
+        const prefs = data?.site_prefs || {};
+        const current = prefs[host] !== false;
+        const next = !current;
+        prefs[host] = next;
+        chrome.storage.local.set({ site_prefs: prefs }, () => {
+          this.siteEnabled = next;
+          this.showGhostText(next ? 'Enabled autocomplete on this site' : 'Disabled autocomplete on this site', null, next ? 'ready' : 'error');
+          setTimeout(() => this.clearGhostText(), 1200);
+        });
+      });
+    } catch (e) {
+      console.log('[SmartAutocomplete] Failed to toggle site preference:', e.message);
+    }
   }
 
   positionGhostText() {
@@ -673,13 +963,18 @@ Respond with JSON containing:
   acceptGhostText() {
     if (!this.ghostTextElement || !this.activeElement || !this.currentCompletion) return;
     
-    const text = this.currentCompletion;
+    let text = this.currentCompletion;
     
     // Insert the text into the active element using saved cursor position
     if (this.activeElement.tagName === 'TEXTAREA' || this.activeElement.tagName === 'INPUT') {
       const currentValue = this.activeElement.value;
       // Use saved cursor position if available, otherwise current position
       const cursorPos = this.savedCursorPosition !== null ? this.savedCursorPosition : this.activeElement.selectionStart;
+      const prevChar = cursorPos > 0 ? currentValue.slice(cursorPos - 1, cursorPos) : '';
+      // If we would create double spaces, collapse to single
+      if ((prevChar === ' ' && /^\s/.test(text)) || /\s{2,}$/.test(currentValue.slice(0, cursorPos) + text)) {
+        text = text.replace(/^\s+/, '');
+      }
       
       this.activeElement.value = currentValue.slice(0, cursorPos) + text + currentValue.slice(cursorPos);
       this.activeElement.selectionStart = this.activeElement.selectionEnd = cursorPos + text.length;
@@ -697,6 +992,17 @@ Respond with JSON containing:
         try {
           insertionRange.setStart(this.savedCursorPosition.container, this.savedCursorPosition.offset);
           insertionRange.collapse(true);
+          // Check previous character if in a text node
+          try {
+            const node = this.savedCursorPosition.container;
+            if (node && node.nodeType === Node.TEXT_NODE) {
+              const t = node.textContent || '';
+              const prev = this.savedCursorPosition.offset > 0 ? t[this.savedCursorPosition.offset - 1] : '';
+              if ((prev === ' ' && /^\s/.test(text)) || /\s{2,}$/.test(t.slice(0, this.savedCursorPosition.offset) + text)) {
+                text = text.replace(/^\s+/, '');
+              }
+            }
+          } catch (_) {}
         } catch (error) {
           // Fallback to current selection if saved position is invalid
           const selection = window.getSelection();
@@ -751,6 +1057,61 @@ Respond with JSON containing:
            !['Tab', 'Escape', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 
              'Home', 'End', 'PageUp', 'PageDown'].includes(event.code);
   }
+
+  matchesShortcut(event, shortcut) {
+    // shortcut like 'Ctrl+Shift+S'
+    if (!shortcut) return false;
+    const parts = shortcut.split('+');
+    const needCtrl = parts.includes('Ctrl');
+    const needShift = parts.includes('Shift');
+    const needAlt = parts.includes('Alt');
+    const key = parts[parts.length - 1];
+    if (!!event.ctrlKey !== !!needCtrl) return false;
+    if (!!event.shiftKey !== !!needShift) return false;
+    if (!!event.altKey !== !!needAlt) return false;
+    if (key.length === 1) {
+      // letter
+      return event.code === ('Key' + key.toUpperCase());
+    }
+    return event.code === key;
+  }
+
+  async loadSettings() {
+    try {
+      if (!chrome?.storage?.local) return;
+      chrome.storage.local.get(['settings'], (data) => {
+        const s = data?.settings || {};
+        this.updateSettingsFromObject(s);
+      });
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  updateSettingsFromObject(s) {
+    this.triggers.ctrlEnter = !!s.ctrlEnter;
+    this.triggers.doubleSpace = !!s.doubleSpace;
+    this.triggers.autoAfterPunctuation = !!s.autoAfterPunctuation;
+    if (typeof s.disableToggleShortcut === 'string' && s.disableToggleShortcut.trim()) {
+      this.disableToggleShortcut = s.disableToggleShortcut.trim();
+    }
+    if (typeof s.cacheSize === 'number' && s.cacheSize > 10 && s.cacheSize <= 500) {
+      this.cache = new LRUCache(s.cacheSize);
+    }
+    if (typeof s.minSentences === 'number') this.minSentences = Math.min(3, Math.max(1, s.minSentences));
+    if (typeof s.maxSentences === 'number') this.maxSentences = Math.min(6, Math.max(1, s.maxSentences));
+  }
+
+  stripCursorArtifacts(text) {
+    if (!text) return text;
+    // Remove full marker and common partials that can appear mid-stream
+    return text
+      .replace(/\[CURSOR\]/gi, '')
+      .replace(/\[CURS/gi, '')
+      .replace(/CURSOR\]/gi, '')
+      .replace(/CUR/gi, (m)=>'') // rare partials
+      .trim();
+  }
 }
 
 // Initialize when DOM is ready
@@ -761,3 +1122,38 @@ if (document.readyState === 'loading') {
 } else {
   new SmartAutocomplete();
 }
+
+// Site preference helpers (persisted per hostname)
+SmartAutocomplete.prototype.loadSitePreference = async function() {
+  try {
+    if (!chrome?.storage?.local) return;
+    const host = location.hostname;
+    chrome.storage.local.get(['site_prefs'], (data) => {
+      const prefs = data?.site_prefs || {};
+      this.siteEnabled = prefs[host] !== false; // default enabled
+    });
+  } catch (e) {
+    console.log('[SmartAutocomplete] Failed to load site preference:', e.message);
+    this.siteEnabled = true;
+  }
+};
+
+SmartAutocomplete.prototype.toggleSitePreference = async function() {
+  try {
+    if (!chrome?.storage?.local) return;
+    const host = location.hostname;
+    chrome.storage.local.get(['site_prefs'], (data) => {
+      const prefs = data?.site_prefs || {};
+      const current = prefs[host] !== false;
+      const next = !current;
+      prefs[host] = next;
+      chrome.storage.local.set({ site_prefs: prefs }, () => {
+        this.siteEnabled = next;
+        this.showGhostText(next ? 'Enabled autocomplete on this site' : 'Disabled autocomplete on this site', null, next ? 'ready' : 'error');
+        setTimeout(() => this.clearGhostText(), 1200);
+      });
+    });
+  } catch (e) {
+    console.log('[SmartAutocomplete] Failed to toggle site preference:', e.message);
+  }
+};
