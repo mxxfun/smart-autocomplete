@@ -46,6 +46,9 @@ class SmartAutocomplete {
     this._websiteContextCache = { value: null, ts: 0 };
     this.minSentences = 1;
     this.maxSentences = 3;
+    this.minTriggerIntervalMs = 350;
+    this._lastTriggerTs = 0;
+    this._lastStreamUpdateMs = 0;
     
     this.init();
   }
@@ -174,6 +177,13 @@ class SmartAutocomplete {
   async handleTrigger() {
     console.log('[SmartAutocomplete] Trigger activated');
     
+    // Throttle triggers to avoid spamming model
+    const nowTs = performance.now();
+    if (nowTs - this._lastTriggerTs < this.minTriggerIntervalMs) {
+      return;
+    }
+    this._lastTriggerTs = nowTs;
+
     if (!this.activeElement || !this.isTextInput(this.activeElement)) {
       console.log('[SmartAutocomplete] No valid text input focused');
       return;
@@ -305,7 +315,11 @@ class SmartAutocomplete {
           if (typeof chunk !== 'string') continue;
           accumulated += chunk;
           const cleaned = this.cleanCompletionText(accumulated, contextData);
-          if (cleaned.trim().length > 0) this.updateGhostText(cleaned);
+          const tNow = performance.now();
+          if (cleaned.trim().length > 0 && tNow - this._lastStreamUpdateMs > 60) {
+            this.updateGhostText(cleaned);
+            this._lastStreamUpdateMs = tNow;
+          }
           if (this.shouldEarlyStopStreaming(cleaned)) { earlyStop = true; break; }
         }
       } else if (stream && typeof stream.onToken === 'function') {
@@ -316,7 +330,11 @@ class SmartAutocomplete {
             if (earlyStop) return;
             accumulated += token || '';
             const cleaned = this.cleanCompletionText(accumulated, contextData);
-            if (cleaned.trim().length > 0) this.updateGhostText(cleaned);
+            const tNow = performance.now();
+            if (cleaned.trim().length > 0 && tNow - this._lastStreamUpdateMs > 60) {
+              this.updateGhostText(cleaned);
+              this._lastStreamUpdateMs = tNow;
+            }
             if (this.shouldEarlyStopStreaming(cleaned)) { earlyStop = true; }
           });
           stream.onDone(() => resolve());
@@ -490,6 +508,7 @@ Rules:
     
     // Analyze text to determine if it needs completion or is a question
     const isQuestion = this.isTextQuestion(beforeCursor);
+    const toneHints = this.deriveToneHints(beforeCursor);
     const completionType = isQuestion ? 'answer this question' : 'continue this text naturally with matching tone and phrasing';
     
     return `You are a text completion assistant. Complete ONLY the text after [CURSOR].
@@ -501,7 +520,7 @@ CRITICAL INSTRUCTIONS:
 - DO NOT repeat any text that appears before [CURSOR]
 - ${isQuestion ? 'Provide a helpful answer to the question' : 'Continue the text naturally from the cursor position'}
 - ${languageInstruction}
-- Match the writing style and tone exactly
+- Match the writing style and tone exactly${toneHints ? ` (hints: ${toneHints})` : ''}
 - Provide 1-3 sentences maximum that flow naturally from the cursor position
 - If the text already seems complete, respond with accept: false
 
@@ -659,6 +678,19 @@ Respond with JSON containing:
       lastSentence.startsWith(word + ' ') || 
       lastSentence.includes(' ' + word + ' ')
     );
+  }
+
+  deriveToneHints(text) {
+    const recent = (text || '').slice(-300);
+    const hints = [];
+    // Simple heuristics for tone
+    if (/[!:]$/.test(recent) || /\b(please|thank you|appreciate)\b/i.test(recent)) hints.push('polite');
+    if (/[A-Z]{3,}/.test(recent)) hints.push('emphatic');
+    if (/\b(we|our)\b/i.test(recent)) hints.push('inclusive');
+    if (/\b(I|me|my)\b/.test(recent)) hints.push('first-person');
+    if (/\b(agenda|action items|next steps)\b/i.test(recent)) hints.push('concise');
+    if (/\b(?!I )[A-Z][a-z]+\b/.test(recent) && /\b(analysis|summary|overview)\b/i.test(recent)) hints.push('formal');
+    return hints.join(', ');
   }
 
   handleCompletionResponse(response, language, contextData) {

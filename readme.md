@@ -1,80 +1,56 @@
-# Local Smart Autocomplete Chrome Extension
+# Local Smart Autocomplete (Chrome Extension)
 
-**Google Chrome Built-in AI Hackathon 2025 Entry**
+On-device text autocomplete using Chrome’s Built-in AI (LanguageModel, Summarizer, LanguageDetector). Privacy-first and fast — works in any text field across the web.
 
-## Overview
-On-device text autocomplete using Chrome's Built-in AI APIs (Prompt API, Summarizer API, Language Detector API). Provides intelligent text suggestions triggered by `Ctrl+Shift+Space`.
+## Highlights
+- 100% on-device. No cloud calls, no data leaves your browser
+- Streaming completions with early stop and ghost-text UI (Tab to accept)
+- Multilingual continuation with language detection
+- Smart context (cursor-aware + optional summarization for long text)
+- Configurable triggers and per‑site preferences
 
-## Requirements
-- **Chrome Canary or Dev** ≥128 (regular Chrome also works!)
-- **Component download**: Go to `chrome://components/` → "Optimization Guide On Device Model" → "Check for update"
-- **Chrome flags enabled**: Enable flags at `chrome://flags/#prompt-api-for-gemini-nano`
-- **Hardware**: ARM64 Windows devices confirmed working (Snapdragon X Plus tested)
-- Chrome Dev Mode for unpacked extension loading
+## Install
+1. Go to `chrome://extensions/`
+2. Enable Developer mode
+3. Click “Load unpacked” and select this folder
 
-🎉 **BREAKTHROUGH**: Chrome Built-in AI **WORKS on ARM64**! Confirmed working on Snapdragon X Plus with proper setup.
+Requirement: Chrome with Built-in AI components installed (LanguageModel). If needed, open `chrome://components/` and update “Optimization Guide On Device Model”.
 
-**Setup Required**: Manual component download via `chrome://components/` → "Optimization Guide On Device Model" → "Check for update"
+## Use
+- Focus any text field (textarea, input, or contenteditable)
+- Trigger completion: `Ctrl+Shift+Space` (default)
+- Accept: `Tab`; Dismiss: `Esc` or keep typing
 
-## Installation
-1. Open Chrome and go to `chrome://extensions/`
-2. Enable "Developer mode" (toggle in top right)
-3. Click "Load unpacked" 
-4. Select this project folder (`smart-autocomplete`)
-5. The extension will be loaded and ready to use
+Optional triggers (configure in Options):
+- Ctrl+Enter
+- Double‑space
+- Auto‑suggest after punctuation
 
-## Usage
-1. Focus on any text input (textarea, input field, or contenteditable)
-2. Press `Ctrl+Shift+Space` to trigger autocomplete
-3. On first use, the extension will download the AI model (one-time setup)
-4. Ghost text suggestions appear below the cursor
-5. Press `Tab` to accept suggestions
-6. Press `Esc` or start typing to dismiss suggestions
+## Settings
+Open the extension’s Options page:
+- Triggers: Ctrl+Enter, double‑space, auto‑after‑punctuation
+- Per‑site enable/disable (with configurable shortcut, default `Ctrl+Shift+S`)
+- Cache size (entries, not MB)
+- Min/Max sentences (affects streaming early stop and final truncation)
 
-## Files Structure
-```
-smart-autocomplete/
-├── manifest.json          # Extension manifest (MV3)
-├── src/
-│   ├── content.js         # Main logic, keyboard handling, AI integration
-│   └── ui.css            # Ghost text styling
-├── assets/
-│   ├── create-icon.html  # Icon design preview
-│   └── README-ICON.txt   # Icon placeholder instructions
-└── README.md            # This file
-```
+## How it works
+- Detects the active input and extracts a small window of text around the cursor
+- Summarizes earlier context when text is long (on-device Summarizer)
+- Infers the likely tone and uses website context for better suggestions
+- Calls the on-device LanguageModel with structured prompts (or streaming)
+- Renders non-intrusive ghost text; Tab inserts at the exact cursor position
 
-## Features  
-- ✅ **ALL Chrome Built-in AI APIs working on ARM64**: LanguageModel + Summarizer + LanguageDetector
-- ✅ Keyboard shortcut listener (`Ctrl+Shift+Space`)
-- ✅ Ghost text rendering with modern styling  
-- ✅ Works on all text inputs (textarea, input, contenteditable)
-- ✅ Privacy-first: 100% on-device processing
-- ✅ Intelligent fallback mode with context-aware demo suggestions
-- ✅ Complete debug tool for API testing ([debug-ai-model.html](debug-ai-model.html))
-- 🎯 **Community Impact**: First to document ARM64 compatibility and setup process
-
-## 🚀 Major Discovery for ARM64 Community
-
-This project discovered that Chrome Built-in AI **DOES work on ARM64 Windows devices**, solving a critical blocker for the entire ARM64 developer community participating in the Google Chrome Built-in AI Challenge 2025.
-
-### Setup Process (ARM64 & Other Devices)
-1. **Download component**: `chrome://components/` → "Optimization Guide On Device Model" → "Check for update"  
-2. **Enable flags**: `chrome://flags/#prompt-api-for-gemini-nano` → Enabled
-3. **Restart Chrome** completely
-4. **Verify**: `chrome://on-device-internals` should show "Ready" state
-5. **Test**: Use [debug-ai-model.html](debug-ai-model.html) to validate all APIs
-
-### Demo Mode
-Extension gracefully falls back to demo mode with context-aware suggestions when APIs unavailable.
-
-## Next Steps  
-- Fine-tune AI completion logic using all three APIs
-- Optimize prompt engineering for high-quality suggestions
-- Create demo video showcasing ARM64 breakthrough
-- Submit to Chrome Web Store
+## Troubleshooting
+- First use may need an on-device model download (one‑time). Check `chrome://on-device-internals`
+- If streaming doesn’t start, completions fall back to non‑streaming automatically
+- You can disable per site via the shortcut (default `Ctrl+Shift+S`)
 
 ## Privacy
-- All processing happens on-device
-- No data sent to external servers
-- No persistence or logging of user input
+- No data is sent anywhere; everything runs locally in your browser
+- No persistence of user text; only in‑memory caches are used for speed
+
+## Files
+- `manifest.json` — MV3 manifest
+- `src/content.js` — core logic: triggers, AI integration, ghost text
+- `src/ui.css` — ghost text styles
+- `options.html`, `src/options.js` — extension settings UI
