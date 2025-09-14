@@ -2,6 +2,8 @@
 
 On-device text autocomplete using Chrome’s Built-in AI (LanguageModel, Summarizer, LanguageDetector). Privacy-first and fast — works in any text field across the web.
 
+Writing online is often slow and repetitive. Cloud-based AI autocomplete tools raise privacy concerns and fail offline. Local Smart Autocomplete brings that magical autocomplete experience directly into the browser — fast, private, and fully on-device.
+
 ## Highlights
 - 100% on-device. No cloud calls, no data leaves your browser
 - Streaming completions with early stop and ghost-text UI (Tab to accept)
@@ -15,6 +17,8 @@ On-device text autocomplete using Chrome’s Built-in AI (LanguageModel, Summari
 3. Click “Load unpacked” and select this folder
 
 Requirement: Chrome with Built-in AI components installed (LanguageModel). If needed, open `chrome://components/` and update “Optimization Guide On Device Model”.
+
+Tip: Open `debug-ai-model.html` in Chrome to verify the on-device AI APIs and trigger the initial model download if needed. If unavailable, follow the page guidance or visit `chrome://components/` to update “Optimization Guide On Device Model”, then re-run the checks. You can monitor readiness at `chrome://on-device-internals`.
 
 ## Use
 - Focus any text field (textarea, input, or contenteditable)
@@ -54,3 +58,9 @@ Open the extension’s Options page:
 - `src/content.js` — core logic: triggers, AI integration, ghost text
 - `src/ui.css` — ghost text styles
 - `options.html`, `src/options.js` — extension settings UI
+- `debug-ai-model.html` — on-device AI API tester and model setup helper
+
+## Built With
+- Chrome Extensions (Manifest V3)
+- JavaScript, HTML, CSS
+- Chrome Built-in AI APIs: Prompt API, Summarizer API, Language Detector API
