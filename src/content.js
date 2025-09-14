@@ -955,14 +955,17 @@ Respond with JSON only containing:
     this.ghostTextElement.setAttribute('role', 'status');
     this.ghostTextElement.setAttribute('aria-live', 'polite');
     this.ghostTextElement.setAttribute('data-state', state);
+    // Prepare for accurate measurement and ensure top stacking
+    this.ghostTextElement.style.visibility = 'hidden';
+    this.ghostTextElement.style.zIndex = '2147483647';
     
     // Store the actual completion text separately
     this.currentCompletion = completionText || displayText;
 
-    // Position the ghost text
-    this.positionGhostText();
-
+    // Append first, then position based on measured size
     document.body.appendChild(this.ghostTextElement);
+    this.positionGhostText();
+    this.ghostTextElement.style.visibility = '';
   }
 
   updateGhostText(text) {
@@ -1013,16 +1016,144 @@ Respond with JSON only containing:
 
   positionGhostText() {
     if (!this.ghostTextElement || !this.activeElement) return;
-
-    const rect = this.activeElement.getBoundingClientRect();
+    const inputRect = this.activeElement.getBoundingClientRect();
+    const caretRect = this.getCaretViewportRect(this.activeElement) || inputRect;
+    const isFixed = this.isElementFixed(this.activeElement);
     const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
     const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
 
-    // Position below the active element
-    this.ghostTextElement.style.position = 'absolute';
-    this.ghostTextElement.style.left = (rect.left + scrollLeft) + 'px';
-    this.ghostTextElement.style.top = (rect.bottom + scrollTop + 2) + 'px';
-    this.ghostTextElement.style.width = Math.min(400, rect.width) + 'px';
+    // Choose positioning mode based on ancestor positioning
+    this.ghostTextElement.style.position = isFixed ? 'fixed' : 'absolute';
+
+    // Target viewport coordinates (independent of scroll)
+    let vLeft = caretRect.left;
+    let vTop = caretRect.bottom + 6; // a little below the caret
+
+    // Set initial width and position
+    const vw = document.documentElement.clientWidth;
+    const vh = document.documentElement.clientHeight;
+    const maxWidth = Math.min(400, Math.max(140, vw - vLeft - 8));
+    this.ghostTextElement.style.width = maxWidth + 'px';
+    this.ghostTextElement.style.left = (isFixed ? vLeft : (scrollLeft + vLeft)) + 'px';
+    this.ghostTextElement.style.top = (isFixed ? vTop : (scrollTop + vTop)) + 'px';
+    this.ghostTextElement.style.zIndex = '2147483647';
+
+    // Measure and clamp into the viewport, and place above if no room below
+    const ghostRect = this.ghostTextElement.getBoundingClientRect();
+
+    // Horizontal clamping
+    if (ghostRect.right > vw - 4) {
+      vLeft = Math.max(4, vw - ghostRect.width - 4);
+    }
+    if (ghostRect.left < 4) {
+      vLeft = 4;
+    }
+
+    // Vertical clamping: if overflowing bottom, try above
+    if (ghostRect.bottom > vh - 4) {
+      vTop = Math.max(4, caretRect.top - ghostRect.height - 6);
+    }
+    if (vTop < 4) {
+      vTop = 4;
+    }
+
+    // Apply clamped coordinates
+    this.ghostTextElement.style.left = (isFixed ? vLeft : (scrollLeft + vLeft)) + 'px';
+    this.ghostTextElement.style.top = (isFixed ? vTop : (scrollTop + vTop)) + 'px';
+  }
+
+  getCaretViewportRect(element) {
+    try {
+      if (!element) return null;
+      if (element.tagName === 'TEXTAREA' || element.tagName === 'INPUT') {
+        return this.getTextareaCaretRect(element);
+      }
+      if (element.isContentEditable) {
+        const selection = window.getSelection();
+        if (selection && selection.rangeCount > 0) {
+          const range = selection.getRangeAt(0).cloneRange();
+          range.collapse(true);
+          // Insert a temporary marker to get stable rect even at line ends
+          const marker = document.createElement('span');
+          marker.appendChild(document.createTextNode('\u200b'));
+          range.insertNode(marker);
+          const rect = marker.getBoundingClientRect();
+          marker.parentNode && marker.parentNode.removeChild(marker);
+          if (rect && rect.width >= 0 && rect.height >= 0) return rect;
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  getTextareaCaretRect(textarea) {
+    try {
+      const selectionStart = textarea.selectionStart ?? 0;
+      const value = String(textarea.value || '').substring(0, selectionStart);
+      const taRect = textarea.getBoundingClientRect();
+      const cs = getComputedStyle(textarea);
+
+      const mirror = document.createElement('div');
+      mirror.setAttribute('data-extension', 'smart-autocomplete');
+      mirror.style.position = 'fixed';
+      mirror.style.left = taRect.left + 'px';
+      mirror.style.top = taRect.top + 'px';
+      mirror.style.visibility = 'hidden';
+      mirror.style.pointerEvents = 'none';
+      mirror.style.boxSizing = 'content-box';
+      mirror.style.overflow = 'hidden';
+      mirror.style.whiteSpace = 'pre-wrap';
+      mirror.style.wordWrap = 'break-word';
+      mirror.style.overflowWrap = 'break-word';
+      mirror.style.width = textarea.clientWidth + 'px';
+      mirror.style.padding = cs.paddingTop + ' ' + cs.paddingRight + ' ' + cs.paddingBottom + ' ' + cs.paddingLeft;
+      mirror.style.border = '0';
+      mirror.style.outline = '0';
+      mirror.style.fontFamily = cs.fontFamily;
+      mirror.style.fontSize = cs.fontSize;
+      mirror.style.fontWeight = cs.fontWeight;
+      mirror.style.fontStyle = cs.fontStyle;
+      mirror.style.lineHeight = cs.lineHeight;
+      mirror.style.letterSpacing = cs.letterSpacing;
+      mirror.style.tabSize = cs.tabSize || '4';
+      mirror.style.textAlign = cs.textAlign;
+      mirror.style.direction = cs.direction;
+
+      // Build content up to caret
+      // Preserve spaces and newlines similar to the textarea
+      const before = value.replace(/\n$/g, '\n\u200b'); // ensure trailing newline is measurable
+      const safe = before.replace(/ /g, '\u00a0');
+      const textNode = document.createTextNode(safe);
+      const marker = document.createElement('span');
+      marker.textContent = '\u200b';
+      mirror.appendChild(textNode);
+      mirror.appendChild(marker);
+      document.body.appendChild(mirror);
+
+      // Sync scroll so marker reflects viewport position
+      mirror.scrollTop = textarea.scrollTop;
+      mirror.scrollLeft = textarea.scrollLeft;
+
+      const mrect = marker.getBoundingClientRect();
+      mirror.remove();
+      return mrect;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  isElementFixed(element) {
+    try {
+      let el = element;
+      while (el && el !== document.body) {
+        const style = getComputedStyle(el);
+        if (style.position === 'fixed') return true;
+        el = el.parentElement;
+      }
+    } catch (_) {
+      // ignore
+    }
+    return false;
   }
 
   isGhostTextVisible() {
